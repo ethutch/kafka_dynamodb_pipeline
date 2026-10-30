@@ -1,0 +1,18 @@
+{
+  "eventSource": "SelfManagedKafka",
+  "bootstrapServers": "loalhost:9094",
+  "records": {
+    "customer-events-0": [
+      {
+        "topic": "customer-events",
+        "partition": 0,
+        "offset": 2,
+        "timestamp": 1792090493297,
+        "timestampType": "CREATE_TIME",
+        "key": "VEVSNA==",
+        "value": "AAAAAAAAAAAJCiQzNzBmMGMwMy00NTA3LTRmZTctYWMyNS01NmM0NmYwNGVjYzYSBkNSRUFURRoEVEVSNCIKT3JhY2xlIEluYyoNTGFycnkgRWxsaXNvbjIDQ0VPOgkxIFBhcmsgQVZCCE5ldyBZb3JrSghOZXcgWW9ya1IFMjUwNjFiCzEyMDU5NDQxMjM0agsxMjA0OTQ0OTg3NnIFYWxpY2V6BWFsaWNlgAG316qHlDSIAbfXqoeUNA==",
+        "headers": []
+      }
+    ]
+  }
+}

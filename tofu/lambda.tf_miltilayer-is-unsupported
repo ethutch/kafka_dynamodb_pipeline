@@ -1,0 +1,104 @@
+# Zips your handler code (everything under ../src) as the Lambda's
+# deployment package. Contains ONLY your code — no dependencies.
+data "archive_file" "lambda_package" {
+  type        = "zip"
+  source_dir  = "${path.module}/../src"
+  output_path = "${path.module}/build/kafka_dynamodb_pipeline.zip"
+
+  excludes = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "**/tests",
+    "**/.pytest_cache",
+    "**/.mypy_cache",
+    "**/.git",
+    "**/.venv",
+     "**/.DS_Store",   
+    "**/.coverage",    
+    "**/htmlcov",      
+  ]
+}
+
+# Builds the dependency layer. Reads [project.dependencies] directly out of
+# pyproject.toml via Python's stdlib tomllib parser (no retyped/duplicated
+# list anywhere in this file), writes it to a requirements.txt, then runs
+# pip INSIDE AWS's official Lambda build image, targeting arm64 explicitly,
+# so compiled extensions (protobuf, pydantic) match your actual hardware.
+# Requires Python 3.11+ on the host machine running `tofu apply` (tomllib
+# is stdlib since 3.11 — no extra tooling needed beyond that).
+resource "null_resource" "install_lambda_layer_deps" {
+  triggers = {
+    dependencies_hash = filesha256("${path.module}/../pyproject.toml")
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      rm -rf ${path.module}/layer_build
+      mkdir -p ${path.module}/layer_build/python
+
+      python3 -c "
+import tomllib
+with open('${path.module}/../pyproject.toml', 'rb') as f:
+    data = tomllib.load(f)
+deps = data['project']['dependencies']
+print('\n'.join(deps))
+" > ${path.module}/layer_build/requirements.txt
+
+      docker run --rm \
+        --platform linux/arm64 \
+        -v "${path.module}/layer_build:/work" \
+        public.ecr.aws/sam/build-python3.13 \
+        pip install -r /work/requirements.txt --target /work/python
+    EOT
+  }
+}
+
+# Zips the installed dependencies into a layer package. The "python/"
+# subfolder name inside the zip is a Lambda-specific convention the
+# runtime's import path looks for automatically.
+data "archive_file" "lambda_layer" {
+  type        = "zip"
+  source_dir  = "${path.module}/layer_build"
+  output_path = "${path.module}/build/lambda_layer.zip"
+
+  # archive_file normally runs independent of resource creation order.
+  # Here it depends on the side effect of the local-exec run above, so this
+  # explicit depends_on is required to avoid zipping a stale/empty directory.
+  depends_on = [null_resource.install_lambda_layer_deps]
+}
+
+resource "aws_lambda_layer_version" "dependencies" {
+  layer_name               = "kafka-dynamodb-pipeline-deps"
+  filename                 = data.archive_file.lambda_layer.output_path
+  source_code_hash         = data.archive_file.lambda_layer.output_base64sha256
+  compatible_runtimes      = ["python3.13"]
+  compatible_architectures = ["arm64"]
+}
+
+resource "aws_lambda_function" "kafka_to_dynamodb" {
+  filename         = data.archive_file.lambda_package.output_path
+  source_code_hash = data.archive_file.lambda_package.output_base64sha256
+  layers           = [aws_lambda_layer_version.dependencies.arn]
+
+  function_name = "kafka-dynamodb-pipeline"
+  role          = aws_iam_role.lambda_role.arn
+
+  # Module-path-style reference: each "." before the final segment is a
+  # directory boundary. Terraform never validates this string against your
+  # actual code — a mismatch surfaces only as a runtime ImportModuleError
+  # on invoke, not as an apply-time error.
+  handler = "kafka_dynamodb_pipeline.main.handler"
+  runtime = "python3.13"
+
+  # Must match the layer's compatible_architectures above.
+  architectures = ["arm64"]
+
+  environment {
+    variables = {
+      DYNAMODB_TABLE_NAME   = aws_dynamodb_table.customers.name
+      DYNAMODB_ENDPOINT_URL = var.dynamodb_endpoint
+    }
+  }
+
+  depends_on = [aws_dynamodb_table.customers]
+}

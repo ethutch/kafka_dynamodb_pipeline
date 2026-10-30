@@ -1,0 +1,2 @@
+
+{'topic': 'customer-events', 'partition': 0, 'offset': 2, 'timestamp': 1792090493297, 'timestamp_type': 0, 'key': b'TER4', 'value': b'\x00\x00\x00\x00\x00\x00\x00\x00\t\n$370f0c03-4507-4fe7-ac25-56c46f04ecc6\x12\x06CREATE\x1a\x04TER4"\nOracle Inc*\rLarry Elli...\x0b12049449876r\x05alicez\x05alice\x80\x01\xb7\xd7\xaa\x87\x944\x88\x01\xb7\xd7\xaa\x87\x944', 'headers': []}

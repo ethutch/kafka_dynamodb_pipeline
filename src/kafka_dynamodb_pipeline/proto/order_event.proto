@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package com.jetsys.northwind.order;
+
+option java_package = "com.jetsys.northwindapiserver.order";
+option java_outer_classname = "OrderEventProto";
+option java_multiple_files = true;
+
+message OrderDetailMessage {
+  int32  product_id  = 1;
+  float  unit_price  = 2;
+  int32  quantity    = 3;
+  float  discount    = 4;
+}
+
+message OrderEventMessage {
+  string correlation_id    = 1;
+  string action            = 2;
+  int32  order_id          = 3;
+  string customer_id       = 4;
+  int32  employee_id       = 5;
+  string order_date        = 6;   // ISO-8601 string e.g. "2024-03-15"
+  string required_date     = 7;
+  string shipped_date      = 8;
+  float  freight           = 9;
+  string ship_name         = 10;
+  string ship_address      = 11;
+  string ship_city         = 12;
+  string ship_region       = 13;
+  string ship_postal_code  = 14;
+  string ship_country      = 15;
+  repeated OrderDetailMessage order_details = 16;
+  string created_by        = 17;
+  string updated_by        = 18;
+  int64  created_at        = 19;  // epoch millis
+  int64  updated_at        = 20;  // epoch millis
+}

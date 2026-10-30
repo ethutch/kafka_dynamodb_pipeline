@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package proto;
+
+import "google/protobuf/timestamp.proto";
+
+message CustomerEventMessage {
+  string correlation_id = 1;
+  string action = 2;
+  string customer_id = 3;
+  string company_name = 4;
+  string contact_name = 5;
+  string contact_title = 6;
+  string address = 7;
+  string city = 8;
+  string region = 9;
+  string postal_code = 10;
+  string country = 11;
+  string phone = 12;
+  string fax = 13;
+  string created_by = 14;
+  string updated_by = 15;
+  google.protobuf.Timestamp created_at = 16;
+  google.protobuf.Timestamp updated_at = 17;
+}

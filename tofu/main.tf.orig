@@ -1,0 +1,223 @@
+terraform {
+  required_version = ">= 1.6.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.28.0"
+    }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
+  }
+}
+
+provider "aws" {
+  region                      = var.aws_region
+  access_key                  = "mockkey"
+  secret_key                  = "mockkey"
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
+  s3_use_path_style           = true
+
+  endpoints {
+    apigateway     = var.localstack_endpoint
+    dynamodb       = var.dynamodb_endpoint
+    events         = var.localstack_endpoint
+    iam            = var.localstack_endpoint
+    lambda         = var.localstack_endpoint
+    s3             = var.localstack_endpoint
+    secretsmanager = var.localstack_endpoint
+    sqs            = var.localstack_endpoint
+    sts            = var.localstack_endpoint
+  }
+}
+
+# DynamoDB table. Hash key = customer_id. GSI allows querying by
+# company_name without a full table scan.
+resource "aws_dynamodb_table" "customers" {
+  name         = "customers"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "customer_id"
+
+  attribute {
+    name = "customer_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "company_name"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "company_name-index"
+    hash_key        = "company_name"
+    projection_type = "ALL"
+  }
+}
+
+# Execution role the Lambda assumes at runtime. Grants ZERO permissions by
+# itself — only declares that the Lambda service may assume this identity.
+# Actual permissions come from the two role_policy resources below.
+resource "aws_iam_role" "lambda_role" {
+  name = "kafka_customer_consumer_role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+}
+
+# CloudWatch Logs permissions. LocalStack Community does not enforce IAM,
+# so this has no local effect — it exists for correctness against real AWS.
+resource "aws_iam_role_policy" "lambda_logging" {
+  name = "lambda-logging"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+      Resource = "arn:aws:logs:*:*:*"
+    }]
+  })
+}
+
+# CRUD on the customers table and its GSI. Scoped to this table only.
+resource "aws_iam_role_policy" "lambda_dynamodb" {
+  name = "lambda-dynamodb-access"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query"
+      ]
+      Resource = [
+        aws_dynamodb_table.customers.arn,
+        "${aws_dynamodb_table.customers.arn}/index/*"
+      ]
+    }]
+  })
+}
+
+# Zips your handler code (everything under ../src) as the Lambda's
+# deployment package. Contains ONLY your code — no dependencies.
+data "archive_file" "lambda_package" {
+  type        = "zip"
+  source_dir  = "${path.module}/../src"
+  output_path = "${path.module}/build/kafka_dynamodb_pipeline.zip"
+
+  excludes = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "**/tests",
+    "**/.pytest_cache",
+    "**/.mypy_cache",
+    "**/.git",
+    "**/.venv",
+  ]
+}
+
+# Builds the dependency layer. Reads [project.dependencies] directly out of
+# pyproject.toml via Python's stdlib tomllib parser (no retyped/duplicated
+# list anywhere in this file), writes it to a requirements.txt, then runs
+# pip INSIDE AWS's official Lambda build image, targeting arm64 explicitly,
+# so compiled extensions (protobuf, pydantic) match your actual hardware.
+# Requires Python 3.11+ on the host machine running `tofu apply` (tomllib
+# is stdlib since 3.11 — no extra tooling needed beyond that).
+resource "null_resource" "install_lambda_layer_deps" {
+  triggers = {
+    dependencies_hash = filesha256("${path.module}/../pyproject.toml")
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      rm -rf ${path.module}/layer_build
+      mkdir -p ${path.module}/layer_build/python
+
+      python3 -c "
+import tomllib
+with open('${path.module}/../pyproject.toml', 'rb') as f:
+    data = tomllib.load(f)
+deps = data['project']['dependencies']
+print('\n'.join(deps))
+" > ${path.module}/layer_build/requirements.txt
+
+      docker run --rm \
+        --platform linux/arm64 \
+        -v "${path.module}/layer_build:/work" \
+        public.ecr.aws/sam/build-python3.13 \
+        pip install -r /work/requirements.txt --target /work/python
+    EOT
+  }
+}
+
+# Zips the installed dependencies into a layer package. The "python/"
+# subfolder name inside the zip is a Lambda-specific convention the
+# runtime's import path looks for automatically.
+data "archive_file" "lambda_layer" {
+  type        = "zip"
+  source_dir  = "${path.module}/layer_build"
+  output_path = "${path.module}/build/lambda_layer.zip"
+
+  # archive_file normally runs independent of resource creation order.
+  # Here it depends on the side effect of the local-exec run above, so this
+  # explicit depends_on is required to avoid zipping a stale/empty directory.
+  depends_on = [null_resource.install_lambda_layer_deps]
+}
+
+resource "aws_lambda_layer_version" "dependencies" {
+  layer_name               = "kafka-dynamodb-pipeline-deps"
+  filename                 = data.archive_file.lambda_layer.output_path
+  source_code_hash         = data.archive_file.lambda_layer.output_base64sha256
+  compatible_runtimes      = ["python3.13"]
+  compatible_architectures = ["arm64"]
+}
+
+resource "aws_lambda_function" "kafka_to_dynamodb" {
+  filename         = data.archive_file.lambda_package.output_path
+  source_code_hash = data.archive_file.lambda_package.output_base64sha256
+  layers           = [aws_lambda_layer_version.dependencies.arn]
+
+  function_name = "kafka-dynamodb-pipeline"
+  role          = aws_iam_role.lambda_role.arn
+
+  # Module-path-style reference: each "." before the final segment is a
+  # directory boundary. Terraform never validates this string against your
+  # actual code — a mismatch surfaces only as a runtime ImportModuleError
+  # on invoke, not as an apply-time error.
+  handler = "kafka_dynamodb_pipeline.main.handler"
+  runtime = "python3.13"
+
+  # Must match the layer's compatible_architectures above.
+  architectures = ["arm64"]
+
+  environment {
+    variables = {
+      DYNAMODB_TABLE_NAME   = aws_dynamodb_table.customers.name
+      DYNAMODB_ENDPOINT_URL = var.dynamodb_endpoint
+    }
+  }
+
+  depends_on = [aws_dynamodb_table.customers]
+}
