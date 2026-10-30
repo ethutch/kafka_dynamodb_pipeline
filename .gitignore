@@ -12,6 +12,7 @@ ENV/
 
 # Packaging and build artifacts
 build/
+tofu/consumer_build.zip 
 dist/
 *.egg-info/
 .eggs/
