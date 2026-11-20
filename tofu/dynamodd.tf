@@ -8,21 +8,21 @@
 resource "aws_dynamodb_table" "customers" {
   name         = "customers"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "customerId"
+  hash_key     = "customer_id"
 
   attribute {
-    name = "customerId"
+    name = "customer_id"
     type = "S"
   }
 
   attribute {
-    name = "companyName"
+    name = "company_name"
     type = "S"
   }
 
   global_secondary_index {
-    name            = "companyName-index"
-    hash_key        = "companyName"
+    name            = "company_name_index"
+    hash_key        = "company_name"
     projection_type = "ALL"
   }
 

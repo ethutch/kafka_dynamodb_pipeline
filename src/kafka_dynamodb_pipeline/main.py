@@ -55,7 +55,7 @@ def handler(event: dict[str, Any], context: Context) -> dict[str, Any]:
                 log.debug("Event Deserialized ", domain_event.model_dump())
 
                 # Convert to DynamoDB 
-                item = domain_event.model_dump(by_alias=True, mode="json")  
+                item = domain_event.model_dump(by_alias=False, mode="json")  
                 #TODO: Take proper action based on the event type (CREATE, UPDATE, DELETE)
 
                 table.put_item(Item=item)

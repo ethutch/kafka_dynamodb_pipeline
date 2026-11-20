@@ -19,3 +19,17 @@ variable "localstack_endpoint" {
   description = "Endpoint for LocalStack services (IAM, Lambda, etc.)"
   # default     = "http://localhost:4566"
 }
+
+variable "log_level" {
+  description = "Application logging level"
+  type        = string
+  default     = "INFO"
+
+  validation {
+    condition = contains(
+      ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+      upper(var.log_level)
+    )
+    error_message = "log_level must be DEBUG, INFO, WARNING, ERROR, or CRITICAL."
+  }
+}

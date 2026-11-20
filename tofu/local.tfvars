@@ -12,3 +12,4 @@ aws_region          = "us-east-1"
 dynamodb_endpoint   = "http://localhost:8000" 
 localstack_endpoint = "http://localhost:4566"
 dynamodb_aws_endpoint = "http://host.docker.internal:8000"
+LOG_LEVEL             = var.log_level
